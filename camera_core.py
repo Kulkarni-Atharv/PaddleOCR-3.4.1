@@ -3,7 +3,7 @@ import cv2
 import time
 
 class CameraManager:
-    def __init__(self, exposure=1000, gain=3.0, fps=30):
+    def __init__(self, exposure=15000, gain=4.0, fps=30):
         self.exposure = exposure
         self.gain = gain
         self.fps = fps
@@ -12,14 +12,15 @@ class CameraManager:
     def initialize_camera(self):
         self.picam2 = Picamera2()
         
-        # We configure 'main' for high-res OCR, and 'lores' can be used for live preview if needed
+        # Use standard RGB format
         video_config = self.picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "BGR888"},
-            lores={"size": (640, 480), "format": "BGR888"},
+            main={"size": (1456, 1088), "format": "RGB888"},
+            lores={"size": (640, 480), "format": "RGB888"},
             controls={
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
-                "AnalogueGain": self.gain
+                "AnalogueGain": self.gain,
+                "AwbMode": 1  # 1 = Auto White Balance (fixes weird coloring)
             }
         )
         self.picam2.configure(video_config)
@@ -34,9 +35,17 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            # We use 'main' to get the high-resolution frame for better text extraction
+            # Capture frame
             frame = self.picam2.capture_array("main")
-            return frame
+            
+            # If the image looks "blue to orange", it means the Red and Blue channels are swapped.
+            # This directly swaps the channels to fix the inversion.
+            corrected_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # If it STILL looks blue to orange, change the above line to:
+            # corrected_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            return corrected_frame
         except Exception as e:
             print("Error capturing frame:", e)
             return None

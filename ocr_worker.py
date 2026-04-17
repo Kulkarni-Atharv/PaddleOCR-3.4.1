@@ -32,7 +32,7 @@ class OCRWorker:
         try:
             # use_angle_cls=True helps if the paper is slightly rotated
             # Note: use_gpu was removed in PaddleOCR v3.x — GPU is auto-detected
-            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang=self.lang, show_log=False)
+            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang=self.lang)
             logging.info("PaddleOCR initialized successfully.")
         except Exception as e:
             logging.error(f"Failed to initialize PaddleOCR: {e}")

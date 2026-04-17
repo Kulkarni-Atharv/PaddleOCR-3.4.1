@@ -6,7 +6,7 @@ from ocr_worker import OCRWorker
 
 def main():
     print("Initializing OCR Engine...")
-    ocr = OCRWorker(use_gpu=False, lang='en')
+    ocr = OCRWorker(lang='en')
     
     if ocr.ocr_engine is None:
         print("Failed to load OCR engine. Please check dependencies.")

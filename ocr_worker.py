@@ -90,17 +90,24 @@ class OCRWorker:
 
         logging.info("Starting text extraction...")
         try:
-            # Run OCR
-            result = self.ocr_engine.ocr(process_img, cls=True)
+            # Run OCR — note: cls parameter was removed in PaddleOCR v3.x
+            result = self.ocr_engine.ocr(process_img)
             
             extracted_text = []
-            if result and result[0]:
-                for line in result[0]:
-                    # line format: [[box coordinates], (text, confidence)]
-                    text = line[1][0]
-                    confidence = line[1][1]
-                    extracted_text.append(text)
-                    logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
+            if result:
+                for page in result:
+                    if not page:
+                        continue
+                    for line in page:
+                        # v2.x format: [[box], (text, confidence)]
+                        # v3.x format: [[box], (text, confidence)]  — same, but page wrapping differs
+                        try:
+                            text = line[1][0]
+                            confidence = line[1][1]
+                            extracted_text.append(text)
+                            logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
+                        except (IndexError, TypeError):
+                            continue
             
             final_text = "\n".join(extracted_text)
             

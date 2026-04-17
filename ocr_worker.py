@@ -31,8 +31,8 @@ class OCRWorker:
         logging.info(f"Initializing PaddleOCR (GPU: {self.use_gpu}, Lang: {self.lang})...")
         try:
             # use_angle_cls=True helps if the paper is slightly rotated
-            # Note: use_gpu was removed in PaddleOCR v3.x — GPU is auto-detected
-            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang=self.lang)
+            # Targeting PaddleOCR v2.7.x which uses lightweight mobile models on CPU/ARM
+            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang=self.lang, use_gpu=self.use_gpu, show_log=False)
             logging.info("PaddleOCR initialized successfully.")
         except Exception as e:
             logging.error(f"Failed to initialize PaddleOCR: {e}")
@@ -90,24 +90,20 @@ class OCRWorker:
 
         logging.info("Starting text extraction...")
         try:
-            # Run OCR — note: cls parameter was removed in PaddleOCR v3.x
-            result = self.ocr_engine.ocr(process_img)
+            # Run OCR with cls=True for angle correction (PaddleOCR v2.7.x API)
+            result = self.ocr_engine.ocr(process_img, cls=True)
             
             extracted_text = []
-            if result:
-                for page in result:
-                    if not page:
+            # v2.7.x returns: [ [ [box, (text, confidence)], ... ] ]
+            if result and result[0]:
+                for line in result[0]:
+                    try:
+                        text = line[1][0]
+                        confidence = line[1][1]
+                        extracted_text.append(text)
+                        logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
+                    except (IndexError, TypeError):
                         continue
-                    for line in page:
-                        # v2.x format: [[box], (text, confidence)]
-                        # v3.x format: [[box], (text, confidence)]  — same, but page wrapping differs
-                        try:
-                            text = line[1][0]
-                            confidence = line[1][1]
-                            extracted_text.append(text)
-                            logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
-                        except (IndexError, TypeError):
-                            continue
             
             final_text = "\n".join(extracted_text)
             

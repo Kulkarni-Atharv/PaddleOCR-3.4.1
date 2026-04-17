@@ -46,7 +46,7 @@ class OCRWorker:
         Preprocesses the image to enhance micro-level fonts.
         - Resizes to a safe resolution for Pi RAM.
         - Sharpens to make micro-fonts crisper.
-        - Applies adaptive threshold for high contrast text.
+        - Does NOT apply heavy thresholding (RapidOCR handles binarization internally).
         """
         if image is None:
             return None
@@ -64,13 +64,8 @@ class OCRWorker:
                                    [0, -1, 0]])
         sharpened = cv2.filter2D(gray, -1, sharpen_kernel)
 
-        # Adaptive threshold — crisp black-on-white text
-        processed = cv2.adaptiveThreshold(
-            sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-        )
-
         # Convert back to BGR (3-channel) as OCR expects color images
-        processed_bgr = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+        processed_bgr = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
 
         return processed_bgr
 
@@ -106,10 +101,10 @@ class OCRWorker:
                 for line in result:
                     try:
                         text = line[1]
-                        confidence = line[2]
+                        confidence = float(line[2])  # Cast to float — RapidOCR may return str
                         extracted_text.append(text)
                         logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
-                    except (IndexError, TypeError):
+                    except (IndexError, TypeError, ValueError):
                         continue
 
             final_text = "\n".join(extracted_text)
@@ -119,7 +114,7 @@ class OCRWorker:
             else:
                 print("\n--- OCR EXTRACTION RESULT ---")
                 print(final_text)
-                print(f"--- Time: {elapsed:.2f}s ---\n")
+                print(f"--- Time: {elapsed} ---\n")
 
             return final_text
 

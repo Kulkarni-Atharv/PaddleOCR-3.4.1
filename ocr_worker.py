@@ -3,25 +3,25 @@ import numpy as np
 import logging
 import os
 
-# Fix segfault on ARM (Raspberry Pi) caused by OpenBLAS multi-threading conflicts
-# Must be set BEFORE importing paddleocr
+# Prevent OpenBLAS thread crashes on ARM
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 try:
-    from paddleocr import PaddleOCR
+    from rapidocr_onnxruntime import RapidOCR
 except ImportError:
-    logging.warning("PaddleOCR is not installed. Run: pip install paddlepaddle paddleocr")
-    PaddleOCR = None
+    logging.warning("RapidOCR is not installed. Run: pip install rapidocr-onnxruntime")
+    RapidOCR = None
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class OCRWorker:
     """
-    A worker class to handle text extraction using PaddleOCR.
-    Optimized for micro-level fonts on Raspberry Pi (ARM64).
+    Text extraction using PaddleOCR models via ONNX Runtime.
+    Uses the same PP-OCRv3/v4 models as PaddleOCR but through ONNX Runtime
+    which has stable ARM64 (Raspberry Pi) support.
+    Optimized for detecting micro-level fonts from a global shutter camera.
     """
     def __init__(self, lang='en'):
         self.lang = lang
@@ -29,37 +29,36 @@ class OCRWorker:
         self._initialize_engine()
 
     def _initialize_engine(self):
-        """Initializes the PaddleOCR engine with lightweight settings for Raspberry Pi."""
-        if PaddleOCR is None:
-            logging.error("Cannot initialize OCR engine: PaddleOCR library is missing.")
+        """Initializes the RapidOCR engine (PaddleOCR models on ONNX Runtime)."""
+        if RapidOCR is None:
+            logging.error("Cannot initialize OCR engine: rapidocr-onnxruntime is missing.")
             return
 
-        logging.info(f"Initializing PaddleOCR (Lang: {self.lang})...")
+        logging.info("Initializing PaddleOCR models via ONNX Runtime...")
         try:
-            # PaddleOCR v3.x has a minimal API — only use_angle_cls and lang are safe
-            self.ocr_engine = PaddleOCR(use_angle_cls=True, lang=self.lang)
-            logging.info("PaddleOCR initialized successfully.")
+            self.ocr_engine = RapidOCR()
+            logging.info("OCR engine initialized successfully.")
         except Exception as e:
-            logging.error(f"Failed to initialize PaddleOCR: {e}")
+            logging.error(f"Failed to initialize OCR engine: {e}")
 
     def preprocess_image(self, image):
         """
         Preprocesses the image to enhance micro-level fonts.
-        NOTE: We do NOT upscale here — the image from the camera is already 1456x1088.
-        Upscaling a large image crashes Pi RAM. Instead we sharpen and threshold.
+        - Resizes to a safe resolution for Pi RAM.
+        - Sharpens to make micro-fonts crisper.
+        - Applies adaptive threshold for high contrast text.
         """
         if image is None:
             return None
 
-        # Resize to a safe resolution for the Pi — large enough for OCR, small enough for RAM
-        # 1456x1088 -> 1024x768 (maintains aspect ratio roughly)
+        # Resize to a safe resolution — large enough for OCR, small enough for Pi RAM
         target_w, target_h = 1024, 768
         resized = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
         # Convert to grayscale
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
 
-        # Apply sharpening kernel to make micro-fonts crisper
+        # Sharpen to make micro-fonts crisper
         sharpen_kernel = np.array([[0, -1, 0],
                                    [-1, 5, -1],
                                    [0, -1, 0]])
@@ -70,7 +69,7 @@ class OCRWorker:
             sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
 
-        # Convert back to BGR (3-channel) as PaddleOCR expects color images
+        # Convert back to BGR (3-channel) as OCR expects color images
         processed_bgr = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
 
         return processed_bgr
@@ -98,15 +97,16 @@ class OCRWorker:
 
         logging.info("Starting text extraction...")
         try:
-            # PaddleOCR v3.x: ocr() takes only the image, no extra args
-            result = self.ocr_engine.ocr(process_img)
+            # RapidOCR returns: (result, elapsed_time)
+            # result is a list of [box, text, confidence] or None
+            result, elapsed = self.ocr_engine(process_img)
 
             extracted_text = []
-            if result and result[0]:
-                for line in result[0]:
+            if result:
+                for line in result:
                     try:
-                        text = line[1][0]
-                        confidence = line[1][1]
+                        text = line[1]
+                        confidence = line[2]
                         extracted_text.append(text)
                         logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
                     except (IndexError, TypeError):
@@ -119,7 +119,7 @@ class OCRWorker:
             else:
                 print("\n--- OCR EXTRACTION RESULT ---")
                 print(final_text)
-                print("-----------------------------\n")
+                print(f"--- Time: {elapsed:.2f}s ---\n")
 
             return final_text
 

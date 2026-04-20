@@ -3,7 +3,7 @@ import cv2
 
 
 class CameraManager:
-    def __init__(self, exposure=15000, gain=4.0, fps=30):
+    def __init__(self, exposure=10000, gain=4.0, fps=30):
         self.exposure = exposure
         self.gain = gain
         self.fps = fps
@@ -13,8 +13,8 @@ class CameraManager:
         self.picam2 = Picamera2()
 
         video_config = self.picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "BGR888"},
-            lores={"size": (640, 480), "format": "BGR888"},
+            main={"size": (1456, 1088), "format": "RGB888"},
+            lores={"size": (640, 480), "format": "RGB888"},
             controls={
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
@@ -29,7 +29,8 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            return self.picam2.capture_array("main")
+            frame = self.picam2.capture_array("main")
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         except Exception as e:
             print("Error capturing frame:", e)
             return None

@@ -1,4 +1,5 @@
 from picamera2 import Picamera2
+import numpy as np
 import cv2
 
 
@@ -30,7 +31,10 @@ class CameraManager:
             return None
         try:
             frame = self.picam2.capture_array("main")
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            # Camera outputs RGB; reverse channels to BGR for OpenCV.
+            # Uses numpy slice instead of cv2.cvtColor to avoid issues
+            # with non-contiguous DMA buffers on ARM64.
+            return np.ascontiguousarray(frame[:, :, ::-1])
         except Exception as e:
             print("Error capturing frame:", e)
             return None

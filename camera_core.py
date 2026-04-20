@@ -23,16 +23,33 @@ class CameraManager:
         self.picam2.configure(video_config)
         self.picam2.start()
 
+        # Diagnostic: print actual pixel layout on first capture
+        test = self.picam2.capture_array("main")
+        h, w = test.shape[:2]
+        print(f"[Camera] main stream: shape={test.shape} dtype={test.dtype}")
+        print(f"[Camera] center pixel channels: {test[h//2, w//2]}")
+        test2 = self.picam2.capture_array("lores")
+        print(f"[Camera] lores stream: shape={test2.shape} dtype={test2.dtype}")
+        print(f"[Camera] center pixel channels: {test2[h//2//2, w//2//2]}")
+
     def get_frame(self):
+        """High-res main stream for OCR (1456x1088)."""
         if not self.picam2:
             return None
         try:
-            # PiCamera2 RGB888 returns BGR byte order in numpy.
-            # cv2.imshow consumers: use directly (expects BGR).
-            # PIL/Tkinter consumers: apply cv2.COLOR_BGR2RGB before Image.fromarray.
             return self.picam2.capture_array("main")
         except Exception as e:
             print("Error capturing frame:", e)
+            return None
+
+    def get_preview_frame(self):
+        """Low-res lores stream for live preview (640x480)."""
+        if not self.picam2:
+            return None
+        try:
+            return self.picam2.capture_array("lores")
+        except Exception as e:
+            print("Error capturing preview frame:", e)
             return None
 
     def close(self):

@@ -19,16 +19,17 @@ def main():
         cam_manager.initialize_camera()
         time.sleep(2)
         print("Camera ready. Position text in front of the camera and press SPACE to capture.")
+        print("Diagnostic pixel values printed above — share them if colors are still wrong.")
 
         captured_frame = None
 
         while True:
-            frame = cam_manager.get_frame()
+            # Use lores stream for preview (matches reference code)
+            frame = cam_manager.get_preview_frame()
             if frame is None:
                 continue
 
-            # frame is BGR (PiCamera2 RGB888 is BGR in numpy) — cv2.imshow uses directly
-            cv2.imshow("Camera Feed - SPACE: capture | Q: quit", cv2.resize(frame, (640, 480)))
+            cv2.imshow("Camera Feed - SPACE: capture | Q: quit", frame)
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -36,7 +37,7 @@ def main():
                 print("Exiting.")
                 return
             elif key == 32:
-                captured_frame = frame.copy()
+                captured_frame = cam_manager.get_frame()
                 print("Image captured. Closing preview...")
                 break
 
@@ -49,7 +50,6 @@ def main():
 
     if captured_frame is not None:
         print("Processing image...\n")
-        # OCR preprocessing uses COLOR_BGR2LAB — frame is already BGR, pass directly
         ocr.extract_text(captured_frame, preprocess=True)
 
 

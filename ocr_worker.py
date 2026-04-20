@@ -3,13 +3,21 @@ import numpy as np
 import logging
 import os
 
-# Set before importing PaddlePaddle — ARM thread safety + log suppression
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"] = "2"
+# ── ARM64 / CM5 stability ─────────────────────────────────────────────────────
+# All of these must be set BEFORE paddle / paddleocr are imported.
+# The segfault on ARM64 is caused by multi-threaded NEON/SIMD ops in PaddlePaddle.
+# Forcing every threading layer to 1 thread eliminates the crash.
+os.environ["OPENBLAS_NUM_THREADS"]         = "1"
+os.environ["OMP_NUM_THREADS"]              = "1"
+os.environ["MKL_NUM_THREADS"]              = "1"
+os.environ["BLIS_NUM_THREADS"]             = "1"
+os.environ["FLAGS_paddle_num_threads"]     = "1"
+os.environ["FLAGS_use_mkldnn"]             = "0"
+os.environ["FLAGS_logtostderr"]            = "0"
+os.environ["FLAGS_minloglevel"]            = "3"
+os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"]    = "2"
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-os.environ["FLAGS_logtostderr"] = "0"
-os.environ["FLAGS_minloglevel"] = "3"  # Suppress PaddlePaddle C++ INFO/WARNING
+# ─────────────────────────────────────────────────────────────────────────────
 
 try:
     from paddleocr import PaddleOCR
@@ -22,15 +30,14 @@ except ImportError:
     PaddleOCR = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Suppress PaddleOCR / PaddleX internal loggers
-for _name in ('ppocr', 'paddleocr', 'paddlex', 'paddle', 'root'):
-    logging.getLogger(_name).setLevel(logging.ERROR)
+for _log in ('ppocr', 'paddleocr', 'paddlex', 'paddle', 'root'):
+    logging.getLogger(_log).setLevel(logging.ERROR)
 
 
 class OCRWorker:
     """
-    Text extraction using PaddleOCR 3.x (PP-OCRv5 models).
-    Tuned for micro-level font detection on CM5 (ARM64) with a global shutter camera.
+    Text extraction using PaddleOCR 3.x (PP-OCRv5 models) on CM5 (ARM64).
+    Single-threaded inference prevents the NEON segfault on ARM64.
     """
     def __init__(self, lang='en'):
         self.lang = lang
@@ -48,11 +55,11 @@ class OCRWorker:
                 use_angle_cls=True,
                 lang=self.lang,
                 device='cpu',
-                cpu_threads=4,
-                det_limit_side_len=1280,
+                cpu_threads=1,        # 1 thread — prevents ARM64 NEON segfault
+                det_limit_side_len=960,
                 det_db_thresh=0.3,
                 det_db_box_thresh=0.5,
-                rec_batch_num=6,
+                rec_batch_num=1,      # 1 batch — reduces memory pressure on CM5
             )
             logging.info("PaddleOCR initialized successfully.")
         except Exception as e:
@@ -62,10 +69,9 @@ class OCRWorker:
         if image is None:
             return None
 
-        # 1280x960 gives PaddleOCR enough detail for fine text; CM5 handles it fine
         resized = cv2.resize(image, (1280, 960), interpolation=cv2.INTER_LANCZOS4)
 
-        # CLAHE on L channel for better local contrast on low-contrast/faint text
+        # CLAHE for better local contrast on faint/low-contrast text
         lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l_eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
@@ -73,9 +79,7 @@ class OCRWorker:
 
         # Unsharp mask to crisp up micro-fonts
         blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=1.5)
-        sharpened = cv2.addWeighted(enhanced, 1.6, blur, -0.6, 0)
-
-        return sharpened
+        return cv2.addWeighted(enhanced, 1.6, blur, -0.6, 0)
 
     def extract_text(self, image, preprocess=True):
         """
@@ -100,19 +104,18 @@ class OCRWorker:
 
         logging.info("Starting text extraction...")
         try:
-            # PaddleOCR 3.x predict() returns a list of result objects (one per image).
-            # Each result exposes rec_texts and rec_scores either as dict keys or attributes.
+            # PaddleOCR 3.x predict() — result is a list, one entry per image.
+            # Each entry is a dict (or object) with rec_texts / rec_scores.
             results = self.ocr_engine.predict(process_img)
 
             extracted_text = []
             if results:
                 for res in results:
-                    # Handle both dict-style and attribute-style access
                     if isinstance(res, dict):
-                        texts = res.get('rec_texts', [])
+                        texts  = res.get('rec_texts', [])
                         scores = res.get('rec_scores', [])
                     else:
-                        texts = getattr(res, 'rec_texts', [])
+                        texts  = getattr(res, 'rec_texts', [])
                         scores = getattr(res, 'rec_scores', [])
 
                     for text, score in zip(texts, scores):

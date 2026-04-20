@@ -3,11 +3,13 @@ import numpy as np
 import logging
 import os
 
-# Must be set before importing PaddlePaddle — prevents ARM thread crashes on CM5
+# Set before importing PaddlePaddle — ARM thread safety + log suppression
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"] = "2"
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"  # Skip slow connectivity check on startup
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+os.environ["FLAGS_logtostderr"] = "0"
+os.environ["FLAGS_minloglevel"] = "3"  # Suppress PaddlePaddle C++ INFO/WARNING
 
 try:
     from paddleocr import PaddleOCR
@@ -20,14 +22,14 @@ except ImportError:
     PaddleOCR = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Suppress PaddleOCR's own verbose loggers — show_log param was removed in 3.x
-logging.getLogger('ppocr').setLevel(logging.WARNING)
-logging.getLogger('paddleocr').setLevel(logging.WARNING)
+# Suppress PaddleOCR / PaddleX internal loggers
+for _name in ('ppocr', 'paddleocr', 'paddlex', 'paddle', 'root'):
+    logging.getLogger(_name).setLevel(logging.ERROR)
 
 
 class OCRWorker:
     """
-    Text extraction using PaddleOCR 3.4.1 (PP-OCRv5 models).
+    Text extraction using PaddleOCR 3.x (PP-OCRv5 models).
     Tuned for micro-level font detection on CM5 (ARM64) with a global shutter camera.
     """
     def __init__(self, lang='en'):
@@ -40,34 +42,30 @@ class OCRWorker:
             logging.error("Cannot initialize: paddleocr is missing.")
             return
 
-        logging.info("Initializing PaddleOCR 3.4.1 (PP-OCRv5)...")
+        logging.info("Initializing PaddleOCR (PP-OCRv5)...")
         try:
             self.ocr_engine = PaddleOCR(
-                use_angle_cls=True,       # Detect rotated/upside-down text
+                use_angle_cls=True,
                 lang=self.lang,
-                device='cpu',             # use_gpu replaced by device in PaddleOCR 3.x
-                cpu_threads=4,            # CM5 has 4 cores
-                det_limit_side_len=1280,  # Max side length for detector; higher = finer text
-                det_db_thresh=0.3,        # Lower threshold catches faint/thin text edges
-                det_db_box_thresh=0.5,    # Min score to keep a detected box
+                device='cpu',
+                cpu_threads=4,
+                det_limit_side_len=1280,
+                det_db_thresh=0.3,
+                det_db_box_thresh=0.5,
                 rec_batch_num=6,
             )
-            logging.info("PaddleOCR 3.4.1 initialized successfully.")
+            logging.info("PaddleOCR initialized successfully.")
         except Exception as e:
             logging.error(f"Failed to initialize PaddleOCR: {e}")
 
     def preprocess_image(self, image):
-        """
-        Enhances micro-level fonts before handing off to PaddleOCR.
-        PaddleOCR does its own internal preprocessing on top of this.
-        """
         if image is None:
             return None
 
-        # CM5 has enough RAM for 1280x960 — gives PaddleOCR more detail on fine text
+        # 1280x960 gives PaddleOCR enough detail for fine text; CM5 handles it fine
         resized = cv2.resize(image, (1280, 960), interpolation=cv2.INTER_LANCZOS4)
 
-        # CLAHE on the L channel (LAB space) for better local contrast on low-contrast text
+        # CLAHE on L channel for better local contrast on low-contrast/faint text
         lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l_eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
@@ -91,41 +89,44 @@ class OCRWorker:
             str: Detected text lines joined by newlines.
         """
         if self.ocr_engine is None:
-            logging.error("OCR engine is not loaded. Cannot extract text.")
+            logging.error("OCR engine is not loaded.")
             return ""
 
         if image is None:
-            logging.warning("Provided image is None. Skipping OCR.")
+            logging.warning("Image is None. Skipping OCR.")
             return ""
 
         process_img = self.preprocess_image(image) if preprocess else image
 
         logging.info("Starting text extraction...")
         try:
-            # PaddleOCR 3.x API: predict() returns a list of result dicts, one per input image.
-            # Each dict contains:
-            #   'rec_texts'  — list of recognized text strings
-            #   'rec_scores' — list of corresponding confidence floats
-            #   'dt_polys'   — list of bounding polygons (not used here)
+            # PaddleOCR 3.x predict() returns a list of result objects (one per image).
+            # Each result exposes rec_texts and rec_scores either as dict keys or attributes.
             results = self.ocr_engine.predict(process_img)
 
             extracted_text = []
             if results:
                 for res in results:
-                    texts = res.get('rec_texts', [])
-                    scores = res.get('rec_scores', [])
+                    # Handle both dict-style and attribute-style access
+                    if isinstance(res, dict):
+                        texts = res.get('rec_texts', [])
+                        scores = res.get('rec_scores', [])
+                    else:
+                        texts = getattr(res, 'rec_texts', [])
+                        scores = getattr(res, 'rec_scores', [])
+
                     for text, score in zip(texts, scores):
                         try:
                             confidence = float(score)
                             extracted_text.append(text)
                             logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
                         except (TypeError, ValueError):
-                            extracted_text.append(text)
+                            extracted_text.append(str(text))
 
             final_text = "\n".join(extracted_text)
 
             if not final_text:
-                logging.info("No text detected in the image.")
+                logging.info("No text detected.")
             else:
                 print("\n--- OCR EXTRACTION RESULT ---")
                 print(final_text)

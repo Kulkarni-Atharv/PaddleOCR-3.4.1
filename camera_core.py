@@ -14,8 +14,8 @@ class CameraManager:
         
         # Use standard RGB format
         video_config = self.picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "RGB888"},
-            lores={"size": (640, 480), "format": "RGB888"},
+            main={"size": (1456, 1088), "format": "BGR888"},
+            lores={"size": (640, 480), "format": "BGR888"},
             controls={
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
@@ -30,22 +30,16 @@ class CameraManager:
         if self.picam2:
             self.picam2.stop()
 
-    def get_frame(self):
-        """Captures a frame and returns it as a standard OpenCV BGR array."""
-        if not self.picam2:
-            return None
-        try:
-            # Capture frame
-            frame = self.picam2.capture_array("main")
-            
-            # If the image looks "blue to orange", it means the Red and Blue channels are swapped.
-            # This directly swaps the channels to fix the inversion.
-            corrected_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # If it STILL looks blue to orange, change the above line to:
-            # corrected_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            return corrected_frame
-        except Exception as e:
-            print("Error capturing frame:", e)
-            return None
+def get_frame(self):
+    """Captures a frame and returns it correctly for OpenCV."""
+    if not self.picam2:
+        return None
+    try:
+        
+        frame = self.picam2.capture_array("main")
+
+        return frame
+
+    except Exception as e:
+        print("Error capturing frame:", e)
+        return None

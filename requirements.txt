@@ -1,0 +1,8 @@
+# Core
+paddlepaddle>=3.0.0
+paddleocr==3.4.1
+
+# Camera & image processing
+picamera2
+opencv-python
+numpy

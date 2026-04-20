@@ -3,25 +3,28 @@ import numpy as np
 import logging
 import os
 
-# Prevent OpenBLAS thread crashes on ARM
+# Must be set before importing PaddlePaddle — prevents ARM thread crashes on CM5
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"] = "2"  # Suppress verbose PaddlePaddle C++ logs
 
 try:
-    from rapidocr_onnxruntime import RapidOCR
+    from paddleocr import PaddleOCR
 except ImportError:
-    logging.warning("RapidOCR is not installed. Run: pip install rapidocr-onnxruntime")
-    RapidOCR = None
+    logging.warning(
+        "PaddleOCR not installed. Run:\n"
+        "  pip install paddlepaddle\n"
+        "  pip install paddleocr==3.4.1"
+    )
+    PaddleOCR = None
 
-# Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 class OCRWorker:
     """
-    Text extraction using PaddleOCR models via ONNX Runtime.
-    Uses the same PP-OCRv3/v4 models as PaddleOCR but through ONNX Runtime
-    which has stable ARM64 (Raspberry Pi) support.
-    Optimized for detecting micro-level fonts from a global shutter camera.
+    Text extraction using PaddleOCR 3.4.1 (PP-OCRv5 models).
+    Tuned for micro-level font detection on CM5 (ARM64) with a global shutter camera.
     """
     def __init__(self, lang='en'):
         self.lang = lang
@@ -29,45 +32,50 @@ class OCRWorker:
         self._initialize_engine()
 
     def _initialize_engine(self):
-        """Initializes the RapidOCR engine (PaddleOCR models on ONNX Runtime)."""
-        if RapidOCR is None:
-            logging.error("Cannot initialize OCR engine: rapidocr-onnxruntime is missing.")
+        if PaddleOCR is None:
+            logging.error("Cannot initialize: paddleocr is missing.")
             return
 
-        logging.info("Initializing PaddleOCR models via ONNX Runtime...")
+        logging.info("Initializing PaddleOCR 3.4.1 (PP-OCRv5)...")
         try:
-            self.ocr_engine = RapidOCR()
-            logging.info("OCR engine initialized successfully.")
+            self.ocr_engine = PaddleOCR(
+                use_angle_cls=True,       # Detect rotated/upside-down text
+                lang=self.lang,
+                use_gpu=False,
+                enable_mkldnn=False,      # Intel MKL-DNN — must be False on ARM64
+                cpu_threads=4,            # CM5 has 4 cores
+                det_limit_side_len=1280,  # Max side length for detector; higher = finer text
+                det_db_thresh=0.3,        # Lower threshold catches faint/thin text edges
+                det_db_box_thresh=0.5,    # Min score to keep a detected box
+                rec_batch_num=6,
+                show_log=False,
+            )
+            logging.info("PaddleOCR 3.4.1 initialized successfully.")
         except Exception as e:
-            logging.error(f"Failed to initialize OCR engine: {e}")
+            logging.error(f"Failed to initialize PaddleOCR: {e}")
 
     def preprocess_image(self, image):
         """
-        Preprocesses the image to enhance micro-level fonts.
-        - Resizes to a safe resolution for Pi RAM.
-        - Sharpens to make micro-fonts crisper.
-        - Does NOT apply heavy thresholding (RapidOCR handles binarization internally).
+        Enhances micro-level fonts before handing off to PaddleOCR.
+        PaddleOCR does its own internal preprocessing on top of this.
         """
         if image is None:
             return None
 
-        # Resize to a safe resolution — large enough for OCR, small enough for Pi RAM
-        target_w, target_h = 1024, 768
-        resized = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        # CM5 has enough RAM for 1280x960 — gives PaddleOCR more detail on fine text
+        resized = cv2.resize(image, (1280, 960), interpolation=cv2.INTER_LANCZOS4)
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        # CLAHE on the L channel (LAB space) for better local contrast on low-contrast text
+        lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l_eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
+        enhanced = cv2.cvtColor(cv2.merge([l_eq, a, b]), cv2.COLOR_LAB2BGR)
 
-        # Sharpen to make micro-fonts crisper
-        sharpen_kernel = np.array([[0, -1, 0],
-                                   [-1, 5, -1],
-                                   [0, -1, 0]])
-        sharpened = cv2.filter2D(gray, -1, sharpen_kernel)
+        # Unsharp mask to crisp up micro-fonts
+        blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=1.5)
+        sharpened = cv2.addWeighted(enhanced, 1.6, blur, -0.6, 0)
 
-        # Convert back to BGR (3-channel) as OCR expects color images
-        processed_bgr = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
-
-        return processed_bgr
+        return sharpened
 
     def extract_text(self, image, preprocess=True):
         """
@@ -78,7 +86,7 @@ class OCRWorker:
             preprocess: bool — whether to apply micro-font preprocessing
 
         Returns:
-            str: The extracted text as a single string.
+            str: Detected text lines joined by newlines.
         """
         if self.ocr_engine is None:
             logging.error("OCR engine is not loaded. Cannot extract text.")
@@ -92,20 +100,25 @@ class OCRWorker:
 
         logging.info("Starting text extraction...")
         try:
-            # RapidOCR returns: (result, elapsed_time)
-            # result is a list of [box, text, confidence] or None
-            result, elapsed = self.ocr_engine(process_img)
+            # PaddleOCR 3.x API: predict() returns a list of result dicts, one per input image.
+            # Each dict contains:
+            #   'rec_texts'  — list of recognized text strings
+            #   'rec_scores' — list of corresponding confidence floats
+            #   'dt_polys'   — list of bounding polygons (not used here)
+            results = self.ocr_engine.predict(process_img)
 
             extracted_text = []
-            if result:
-                for line in result:
-                    try:
-                        text = line[1]
-                        confidence = float(line[2])  # Cast to float — RapidOCR may return str
-                        extracted_text.append(text)
-                        logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
-                    except (IndexError, TypeError, ValueError):
-                        continue
+            if results:
+                for res in results:
+                    texts = res.get('rec_texts', [])
+                    scores = res.get('rec_scores', [])
+                    for text, score in zip(texts, scores):
+                        try:
+                            confidence = float(score)
+                            extracted_text.append(text)
+                            logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
+                        except (TypeError, ValueError):
+                            extracted_text.append(text)
 
             final_text = "\n".join(extracted_text)
 

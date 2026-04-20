@@ -6,7 +6,8 @@ import os
 # Must be set before importing PaddlePaddle — prevents ARM thread crashes on CM5
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"] = "2"  # Suppress verbose PaddlePaddle C++ logs
+os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"] = "2"
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"  # Skip slow connectivity check on startup
 
 try:
     from paddleocr import PaddleOCR
@@ -19,6 +20,9 @@ except ImportError:
     PaddleOCR = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Suppress PaddleOCR's own verbose loggers — show_log param was removed in 3.x
+logging.getLogger('ppocr').setLevel(logging.WARNING)
+logging.getLogger('paddleocr').setLevel(logging.WARNING)
 
 
 class OCRWorker:
@@ -48,7 +52,6 @@ class OCRWorker:
                 det_db_thresh=0.3,        # Lower threshold catches faint/thin text edges
                 det_db_box_thresh=0.5,    # Min score to keep a detected box
                 rec_batch_num=6,
-                show_log=False,
             )
             logging.info("PaddleOCR 3.4.1 initialized successfully.")
         except Exception as e:

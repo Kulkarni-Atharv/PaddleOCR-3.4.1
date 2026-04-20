@@ -1,32 +1,26 @@
 import cv2
+import gc
 import numpy as np
 import logging
 import os
 
-# ── ARM64 / CM5 stability ─────────────────────────────────────────────────────
-# All of these must be set BEFORE paddle / paddleocr are imported.
-# The segfault on ARM64 is caused by multi-threaded NEON/SIMD ops in PaddlePaddle.
-# Forcing every threading layer to 1 thread eliminates the crash.
-os.environ["OPENBLAS_NUM_THREADS"]         = "1"
-os.environ["OMP_NUM_THREADS"]              = "1"
-os.environ["MKL_NUM_THREADS"]              = "1"
-os.environ["BLIS_NUM_THREADS"]             = "1"
-os.environ["FLAGS_paddle_num_threads"]     = "1"
-os.environ["FLAGS_use_mkldnn"]             = "0"
-os.environ["FLAGS_logtostderr"]            = "0"
-os.environ["FLAGS_minloglevel"]            = "3"
-os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"]    = "2"
+# ── ARM64 / CM5 stability — must be set before paddle imports ─────────────────
+os.environ["OPENBLAS_NUM_THREADS"]              = "1"
+os.environ["OMP_NUM_THREADS"]                   = "1"
+os.environ["MKL_NUM_THREADS"]                   = "1"
+os.environ["BLIS_NUM_THREADS"]                  = "1"
+os.environ["FLAGS_paddle_num_threads"]          = "1"
+os.environ["FLAGS_use_mkldnn"]                  = "0"
+os.environ["FLAGS_logtostderr"]                 = "0"
+os.environ["FLAGS_minloglevel"]                 = "3"
+os.environ["PADDLE_CPP_MAIN_LOG_LEVEL"]         = "2"
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # ─────────────────────────────────────────────────────────────────────────────
 
 try:
     from paddleocr import PaddleOCR
 except ImportError:
-    logging.warning(
-        "PaddleOCR not installed. Run:\n"
-        "  pip install paddlepaddle\n"
-        "  pip install paddleocr==3.4.1"
-    )
+    logging.warning("PaddleOCR not installed. Run: pip install paddlepaddle paddleocr==3.4.1")
     PaddleOCR = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,8 +30,9 @@ for _log in ('ppocr', 'paddleocr', 'paddlex', 'paddle', 'root'):
 
 class OCRWorker:
     """
-    Text extraction using PaddleOCR 3.x (PP-OCRv5 models) on CM5 (ARM64).
-    Single-threaded inference prevents the NEON segfault on ARM64.
+    PaddleOCR 3.x on CM5 (ARM64, 4 GB RAM).
+    Only the det + rec + angle models are loaded; doc-orientation and UVDoc
+    are disabled to save ~120 MB of peak RAM.
     """
     def __init__(self, lang='en'):
         self.lang = lang
@@ -54,16 +49,16 @@ class OCRWorker:
             self.ocr_engine = PaddleOCR(
                 lang=self.lang,
                 device='cpu',
-                cpu_threads=1,                   # 1 thread — ARM64 NEON segfault fix
+                cpu_threads=1,                    # ARM64: multi-thread causes NEON segfault
                 use_angle_cls=True,
-                use_doc_orientation_classify=False,  # Skip PP-LCNet_x1_0_doc_ori (~20MB)
-                use_doc_unwarping=False,             # Skip UVDoc (~100MB) — not needed for camera
-                det_limit_side_len=640,          # Reduce from 960 → 640, cuts inference RAM ~55%
+                use_doc_orientation_classify=False, # Saves ~20 MB, not needed for live camera
+                use_doc_unwarping=False,            # Saves ~100 MB, not needed for camera feed
+                det_limit_side_len=640,            # Caps det input; keeps peak inference RAM low
                 det_db_thresh=0.3,
                 det_db_box_thresh=0.5,
                 rec_batch_num=1,
             )
-            logging.info("PaddleOCR initialized successfully.")
+            logging.info("PaddleOCR initialized.")
         except Exception as e:
             logging.error(f"Failed to initialize PaddleOCR: {e}")
 
@@ -71,74 +66,65 @@ class OCRWorker:
         if image is None:
             return None
 
+        # 800x600 matches what PaddleOCR will internally scale to at det_limit_side_len=640
         resized = cv2.resize(image, (800, 600), interpolation=cv2.INTER_LANCZOS4)
 
-        # CLAHE for better local contrast on faint/low-contrast text
+        # CLAHE — boosts local contrast for faint/micro text without blowing highlights
         lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l_eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
         enhanced = cv2.cvtColor(cv2.merge([l_eq, a, b]), cv2.COLOR_LAB2BGR)
 
-        # Unsharp mask to crisp up micro-fonts
+        # Unsharp mask — crispens micro-fonts
         blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=1.5)
         return cv2.addWeighted(enhanced, 1.6, blur, -0.6, 0)
 
     def extract_text(self, image, preprocess=True):
         """
-        Extracts text from the provided image frame.
-
+        Returns detected text as a newline-joined string.
         Args:
-            image:      numpy array — BGR image from OpenCV/Camera
-            preprocess: bool — whether to apply micro-font preprocessing
-
-        Returns:
-            str: Detected text lines joined by newlines.
+            image:      BGR numpy array from OpenCV/Camera
+            preprocess: apply CLAHE + unsharp preprocessing
         """
         if self.ocr_engine is None:
-            logging.error("OCR engine is not loaded.")
+            logging.error("OCR engine not loaded.")
             return ""
-
         if image is None:
-            logging.warning("Image is None. Skipping OCR.")
+            logging.warning("Image is None.")
             return ""
 
         process_img = self.preprocess_image(image) if preprocess else image
 
-        logging.info("Starting text extraction...")
+        # Free any stale allocations before inference to keep peak RAM low
+        gc.collect()
+
+        logging.info("Running OCR...")
         try:
-            # PaddleOCR 3.x predict() — result is a list, one entry per image.
-            # Each entry is a dict (or object) with rec_texts / rec_scores.
             results = self.ocr_engine.predict(process_img)
 
             extracted_text = []
             if results:
                 for res in results:
-                    if isinstance(res, dict):
-                        texts  = res.get('rec_texts', [])
-                        scores = res.get('rec_scores', [])
-                    else:
-                        texts  = getattr(res, 'rec_texts', [])
-                        scores = getattr(res, 'rec_scores', [])
-
+                    texts  = res.get('rec_texts',  []) if isinstance(res, dict) else getattr(res, 'rec_texts',  [])
+                    scores = res.get('rec_scores', []) if isinstance(res, dict) else getattr(res, 'rec_scores', [])
                     for text, score in zip(texts, scores):
                         try:
-                            confidence = float(score)
-                            extracted_text.append(text)
-                            logging.info(f"Detected: '{text}' (Confidence: {confidence:.2f})")
+                            logging.info(f"  '{text}' ({float(score):.2f})")
                         except (TypeError, ValueError):
-                            extracted_text.append(str(text))
+                            pass
+                        extracted_text.append(str(text))
 
             final_text = "\n".join(extracted_text)
 
             if not final_text:
                 logging.info("No text detected.")
             else:
-                print("\n--- OCR EXTRACTION RESULT ---")
+                print("\n--- OCR RESULT ---")
                 print(final_text)
-                print("-----------------------------\n")
+                print("------------------\n")
 
             return final_text
 
         except Exception as e:
-            logging.error(f"Error during OCR extraction: {e}")
+            logging.error(f"OCR error: {e}")
             return ""

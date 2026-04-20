@@ -1,5 +1,4 @@
 from picamera2 import Picamera2
-import numpy as np
 import cv2
 
 
@@ -20,7 +19,7 @@ class CameraManager:
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
                 "AnalogueGain": self.gain,
-                "AwbMode": 0,
+                "AwbMode": 1,
             }
         )
         self.picam2.configure(video_config)
@@ -30,11 +29,9 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            frame = self.picam2.capture_array("main")
-            # Camera outputs RGB; reverse channels to BGR for OpenCV.
-            # Uses numpy slice instead of cv2.cvtColor to avoid issues
-            # with non-contiguous DMA buffers on ARM64.
-            return np.ascontiguousarray(frame[:, :, ::-1])
+            # RGB888 format: frame is already in RGB — return as-is.
+            # Callers that use cv2.imshow must convert to BGR themselves.
+            return self.picam2.capture_array("main")
         except Exception as e:
             print("Error capturing frame:", e)
             return None

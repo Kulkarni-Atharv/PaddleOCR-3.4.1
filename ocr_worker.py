@@ -45,8 +45,7 @@ class OCRWorker:
             self.ocr_engine = PaddleOCR(
                 use_angle_cls=True,       # Detect rotated/upside-down text
                 lang=self.lang,
-                use_gpu=False,
-                enable_mkldnn=False,      # Intel MKL-DNN — must be False on ARM64
+                device='cpu',             # use_gpu replaced by device in PaddleOCR 3.x
                 cpu_threads=4,            # CM5 has 4 cores
                 det_limit_side_len=1280,  # Max side length for detector; higher = finer text
                 det_db_thresh=0.3,        # Lower threshold catches faint/thin text edges

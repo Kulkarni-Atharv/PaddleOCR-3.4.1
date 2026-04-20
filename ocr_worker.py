@@ -52,14 +52,16 @@ class OCRWorker:
         logging.info("Initializing PaddleOCR (PP-OCRv5)...")
         try:
             self.ocr_engine = PaddleOCR(
-                use_angle_cls=True,
                 lang=self.lang,
                 device='cpu',
-                cpu_threads=1,        # 1 thread — prevents ARM64 NEON segfault
-                det_limit_side_len=960,
+                cpu_threads=1,                   # 1 thread — ARM64 NEON segfault fix
+                use_angle_cls=True,
+                use_doc_orientation_classify=False,  # Skip PP-LCNet_x1_0_doc_ori (~20MB)
+                use_doc_unwarping=False,             # Skip UVDoc (~100MB) — not needed for camera
+                det_limit_side_len=640,          # Reduce from 960 → 640, cuts inference RAM ~55%
                 det_db_thresh=0.3,
                 det_db_box_thresh=0.5,
-                rec_batch_num=1,      # 1 batch — reduces memory pressure on CM5
+                rec_batch_num=1,
             )
             logging.info("PaddleOCR initialized successfully.")
         except Exception as e:
@@ -69,7 +71,7 @@ class OCRWorker:
         if image is None:
             return None
 
-        resized = cv2.resize(image, (1280, 960), interpolation=cv2.INTER_LANCZOS4)
+        resized = cv2.resize(image, (800, 600), interpolation=cv2.INTER_LANCZOS4)
 
         # CLAHE for better local contrast on faint/low-contrast text
         lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)

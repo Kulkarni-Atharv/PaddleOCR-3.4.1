@@ -27,9 +27,8 @@ def main():
             if frame is None:
                 continue
 
-            # frame is RGB; cv2.imshow expects BGR
-            preview = cv2.cvtColor(cv2.resize(frame, (640, 480)), cv2.COLOR_RGB2BGR)
-            cv2.imshow("Camera Feed - SPACE: capture | Q: quit", preview)
+            # frame is BGR (PiCamera2 RGB888 is BGR in numpy) — cv2.imshow uses directly
+            cv2.imshow("Camera Feed - SPACE: capture | Q: quit", cv2.resize(frame, (640, 480)))
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -50,8 +49,8 @@ def main():
 
     if captured_frame is not None:
         print("Processing image...\n")
-        # OCR pipeline (OpenCV internally) expects BGR
-        ocr.extract_text(cv2.cvtColor(captured_frame, cv2.COLOR_RGB2BGR), preprocess=True)
+        # OCR preprocessing uses COLOR_BGR2LAB — frame is already BGR, pass directly
+        ocr.extract_text(captured_frame, preprocess=True)
 
 
 if __name__ == "__main__":

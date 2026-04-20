@@ -1,5 +1,4 @@
 from picamera2 import Picamera2
-import cv2
 
 
 class CameraManager:
@@ -19,7 +18,6 @@ class CameraManager:
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
                 "AnalogueGain": self.gain,
-                "AwbMode": 1,
             }
         )
         self.picam2.configure(video_config)
@@ -29,8 +27,9 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            # RGB888 format: frame is already in RGB — return as-is.
-            # Callers that use cv2.imshow must convert to BGR themselves.
+            # PiCamera2 RGB888 returns BGR byte order in numpy.
+            # cv2.imshow consumers: use directly (expects BGR).
+            # PIL/Tkinter consumers: apply cv2.COLOR_BGR2RGB before Image.fromarray.
             return self.picam2.capture_array("main")
         except Exception as e:
             print("Error capturing frame:", e)

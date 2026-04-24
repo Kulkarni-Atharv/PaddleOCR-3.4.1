@@ -12,16 +12,17 @@ class CameraManager:
     def initialize_camera(self):
         self.picam2 = Picamera2()
 
-        video_config = self.picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "RGB888"},
-            lores={"size": (640, 480), "format": "RGB888"},
+        config = self.picam2.create_preview_configuration(
+            main={"size": (1456, 1088)},
+            lores={"size": (640, 480)},
+            display="main",
             controls={
                 "FrameRate": self.fps,
                 "ExposureTime": self.exposure,
                 "AnalogueGain": self.gain,
             }
         )
-        self.picam2.configure(video_config)
+        self.picam2.configure(config)
         self.picam2.start()
 
         # Diagnostic: print actual pixel layout on first capture

@@ -3,10 +3,7 @@ from picamera2 import Picamera2
 
 
 class CameraManager:
-    def __init__(self, exposure=10000, gain=4.0, fps=30):
-        self.exposure = exposure
-        self.gain = gain
-        self.fps = fps
+    def __init__(self):
         self.picam2 = None
 
     def initialize_camera(self):
@@ -15,12 +12,7 @@ class CameraManager:
         config = self.picam2.create_preview_configuration(
             main={"size": (1456, 1088)},
             lores={"size": (640, 480)},
-            display="main",
-            controls={
-                "FrameRate": self.fps,
-                "ExposureTime": self.exposure,
-                "AnalogueGain": self.gain,
-            }
+            display="main"
         )
         self.picam2.configure(config)
         self.picam2.start()

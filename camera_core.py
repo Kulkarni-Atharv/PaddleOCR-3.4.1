@@ -11,7 +11,7 @@ class CameraManager:
 
         config = self.picam2.create_preview_configuration(
             main={"size": (1456, 1088)},
-            lores={"size": (640, 480)},
+            lores={"size": (640, 480), "format": "RGB888"},
             display="main"
         )
         self.picam2.configure(config)

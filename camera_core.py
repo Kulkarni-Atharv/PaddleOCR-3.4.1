@@ -11,7 +11,7 @@ class CameraManager:
 
         config = self.picam2.create_preview_configuration(
             main={"size": (1456, 1088)},
-            lores={"size": (640, 480), "format": "RGB888"},
+            lores={"size": (640, 480), "format": "BGR888"},
             display="main"
         )
         self.picam2.configure(config)
@@ -42,8 +42,7 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            frame = self.picam2.capture_array("lores")
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return self.picam2.capture_array("lores")
         except Exception as e:
             print("Error capturing preview frame:", e)
             return None

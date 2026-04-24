@@ -1,3 +1,4 @@
+import cv2
 from picamera2 import Picamera2
 
 
@@ -37,7 +38,8 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            return self.picam2.capture_array("main")
+            frame = self.picam2.capture_array("main")
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         except Exception as e:
             print("Error capturing frame:", e)
             return None
@@ -47,7 +49,8 @@ class CameraManager:
         if not self.picam2:
             return None
         try:
-            return self.picam2.capture_array("lores")
+            frame = self.picam2.capture_array("lores")
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         except Exception as e:
             print("Error capturing preview frame:", e)
             return None

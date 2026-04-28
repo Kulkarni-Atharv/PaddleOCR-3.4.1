@@ -55,8 +55,8 @@ class OCRWorker:
                 use_doc_orientation_classify=False, # Saves ~20 MB, not needed for live camera
                 use_doc_unwarping=False,            # Saves ~100 MB, not needed for camera feed
                 det_limit_side_len=640,            # Caps det input; keeps peak inference RAM low
-                det_db_thresh=0.5,                 # 50% - Stricter detection
-                det_db_box_thresh=0.6,             # 60% - Stricter box filtering
+                det_db_thresh=0.3,                 # 30% - Detection threshold
+                det_db_box_thresh=0.5,             # 50% - Box threshold
                 rec_batch_num=1,
             )
             logging.info("PaddleOCR initialized.")

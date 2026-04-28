@@ -1,5 +1,6 @@
 import time
 import cv2
+import sys
 from camera_core import CameraManager
 from ocr_worker import OCRWorker
 
@@ -50,7 +51,7 @@ def main():
 
     if captured_frame is not None:
         print("Processing image...\n")
-        ocr.extract_text(captured_frame, preprocess=True)
+        ocr.extract_text(captured_frame)
 
 
 if __name__ == "__main__":

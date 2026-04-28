@@ -6,14 +6,14 @@ from ocr_worker import OCRWorker
 
 
 def main():
-    # Allow confidence threshold via command line (default 0.50 = 50%)
-    min_conf = 0.50
+    # Allow confidence threshold via command line (default 0.0 = no filtering)
+    min_conf = 0.0
     if len(sys.argv) > 1:
         try:
             min_conf = float(sys.argv[1])
             print(f"Using confidence threshold: {min_conf*100:.0f}%")
         except ValueError:
-            print(f"Invalid threshold, using default 50%")
+            print(f"Invalid threshold, using default 0% (no filtering)")
 
     print("Initializing OCR Engine...")
     ocr = OCRWorker(lang='en', min_confidence=min_conf)

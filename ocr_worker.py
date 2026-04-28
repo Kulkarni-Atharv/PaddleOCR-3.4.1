@@ -55,8 +55,8 @@ class OCRWorker:
                 use_doc_orientation_classify=False, # Saves ~20 MB, not needed for live camera
                 use_doc_unwarping=False,            # Saves ~100 MB, not needed for camera feed
                 det_limit_side_len=640,            # Caps det input; keeps peak inference RAM low
-                det_db_thresh=0.5,                 # 50% - Detection threshold
-                det_db_box_thresh=0.6,             # 60% - Box threshold
+                det_db_thresh=0.3,                 # 30% - Original detection threshold
+                det_db_box_thresh=0.5,             # 50% - Original box threshold
                 rec_batch_num=1,
             )
             logging.info("PaddleOCR initialized.")
@@ -131,12 +131,12 @@ class OCRWorker:
                     for text, score in zip(texts, scores):
                         try:
                             score_float = float(score)
-                            # Filter: only keep words with confidence >= min_confidence
-                            if score_float >= self.min_confidence:
+                            # Filter: only keep words with confidence >= min_confidence (0 = no filter)
+                            if self.min_confidence > 0 and score_float < self.min_confidence:
+                                logging.info(f"  '{text}' ({score_float:.2f}) ✗ filtered (low confidence)")
+                            else:
                                 logging.info(f"  '{text}' ({score_float:.2f}) ✓")
                                 extracted_text.append(str(text))
-                            else:
-                                logging.info(f"  '{text}' ({score_float:.2f}) ✗ filtered (low confidence)")
                         except (TypeError, ValueError):
                             pass
 

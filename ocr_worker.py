@@ -34,8 +34,9 @@ class OCRWorker:
     Only the det + rec + angle models are loaded; doc-orientation and UVDoc
     are disabled to save ~120 MB of peak RAM.
     """
-    def __init__(self, lang='en'):
+    def __init__(self, lang='en', min_confidence=0.90):
         self.lang = lang
+        self.min_confidence = min_confidence  # Only return text with >= 90% confidence
         self.ocr_engine = None
         self._initialize_engine()
 
@@ -54,8 +55,8 @@ class OCRWorker:
                 use_doc_orientation_classify=False, # Saves ~20 MB, not needed for live camera
                 use_doc_unwarping=False,            # Saves ~100 MB, not needed for camera feed
                 det_limit_side_len=640,            # Caps det input; keeps peak inference RAM low
-                det_db_thresh=0.3,
-                det_db_box_thresh=0.5,
+                det_db_thresh=0.9,                 # 90% - Higher = stricter detection, filters debris
+                det_db_box_thresh=0.9,             # 90% - Higher = only keep clear text boxes
                 rec_batch_num=1,
             )
             logging.info("PaddleOCR initialized.")
@@ -69,8 +70,29 @@ class OCRWorker:
         # 800x600 matches what PaddleOCR will internally scale to at det_limit_side_len=640
         resized = cv2.resize(image, (800, 600), interpolation=cv2.INTER_LANCZOS4)
 
+        # Convert to grayscale for noise reduction
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+        # Apply bilateral filter to reduce noise while preserving edges
+        denoised = cv2.bilateralFilter(gray, 9, 75, 75)
+
+        # Adaptive thresholding to remove micro-debris and background noise
+        # Block size 11, C=2 works well for document-like images
+        thresh = cv2.adaptiveThreshold(
+            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
+
+        # Morphological operations to clean small noise/debris
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
+
+        # Convert back to BGR for PaddleOCR
+        enhanced = cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
+
         # CLAHE — boosts local contrast for faint/micro text without blowing highlights
-        lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+        lab = cv2.cvtColor(enhanced, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l_eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
         enhanced = cv2.cvtColor(cv2.merge([l_eq, a, b]), cv2.COLOR_LAB2BGR)
@@ -109,10 +131,15 @@ class OCRWorker:
                     scores = res.get('rec_scores', []) if isinstance(res, dict) else getattr(res, 'rec_scores', [])
                     for text, score in zip(texts, scores):
                         try:
-                            logging.info(f"  '{text}' ({float(score):.2f})")
+                            score_float = float(score)
+                            # Only include text with confidence >= min_confidence threshold
+                            if score_float >= self.min_confidence:
+                                logging.info(f"  '{text}' ({score_float:.2f}) ✓")
+                                extracted_text.append(str(text))
+                            else:
+                                logging.info(f"  '{text}' ({score_float:.2f}) ✗ filtered (low confidence)")
                         except (TypeError, ValueError):
                             pass
-                        extracted_text.append(str(text))
 
             final_text = "\n".join(extracted_text)
 

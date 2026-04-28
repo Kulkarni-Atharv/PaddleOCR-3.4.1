@@ -6,17 +6,8 @@ from ocr_worker import OCRWorker
 
 
 def main():
-    # Allow confidence threshold via command line (default 0.0 = no filtering)
-    min_conf = 0.0
-    if len(sys.argv) > 1:
-        try:
-            min_conf = float(sys.argv[1])
-            print(f"Using confidence threshold: {min_conf*100:.0f}%")
-        except ValueError:
-            print(f"Invalid threshold, using default 0% (no filtering)")
-
     print("Initializing OCR Engine...")
-    ocr = OCRWorker(lang='en', min_confidence=min_conf)
+    ocr = OCRWorker(lang='en')
 
     if ocr.ocr_engine is None:
         print("Failed to load OCR engine. Please check dependencies.")
@@ -60,7 +51,7 @@ def main():
 
     if captured_frame is not None:
         print("Processing image...\n")
-        ocr.extract_text(captured_frame, preprocess=True)
+        ocr.extract_text(captured_frame)
 
 
 if __name__ == "__main__":

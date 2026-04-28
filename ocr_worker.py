@@ -70,6 +70,13 @@ class OCRWorker:
             logging.warning("Image is None.")
             return ""
 
+        # Resize image to reduce memory usage on Pi CM5 (4GB RAM)
+        # Original: 1456x1088, resize to 800x600
+        h, w = image.shape[:2]
+        if w > 800 or h > 600:
+            image = cv2.resize(image, (800, 600), interpolation=cv2.INTER_AREA)
+            logging.info(f"Resized image from {w}x{h} to 800x600")
+
         gc.collect()
 
         logging.info("Running OCR...")

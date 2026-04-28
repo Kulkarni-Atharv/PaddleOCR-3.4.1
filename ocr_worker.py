@@ -36,7 +36,7 @@ class OCRWorker:
     """
     def __init__(self, lang='en', min_confidence=0.90):
         self.lang = lang
-        self.min_confidence = min_confidence  # Only return text with >= 90% confidence
+        self.min_confidence = min_confidence  # Filter words below this confidence
         self.ocr_engine = None
         self._initialize_engine()
 
@@ -55,8 +55,8 @@ class OCRWorker:
                 use_doc_orientation_classify=False, # Saves ~20 MB, not needed for live camera
                 use_doc_unwarping=False,            # Saves ~100 MB, not needed for camera feed
                 det_limit_side_len=640,            # Caps det input; keeps peak inference RAM low
-                det_db_thresh=0.5,                 # 50% - Detection threshold
-                det_db_box_thresh=0.6,             # 60% - Box threshold
+                det_db_thresh=0.5,                 # 50% - Stricter detection
+                det_db_box_thresh=0.6,             # 60% - Stricter box filtering
                 rec_batch_num=1,
             )
             logging.info("PaddleOCR initialized.")
@@ -77,7 +77,6 @@ class OCRWorker:
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
 
         # Adaptive thresholding to remove micro-debris and background noise
-        # Block size 11, C=2 works well for document-like images
         thresh = cv2.adaptiveThreshold(
             denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
             cv2.THRESH_BINARY, 11, 2
@@ -132,7 +131,7 @@ class OCRWorker:
                     for text, score in zip(texts, scores):
                         try:
                             score_float = float(score)
-                            # Only include text with confidence >= min_confidence threshold
+                            # Filter: only keep words with confidence >= min_confidence
                             if score_float >= self.min_confidence:
                                 logging.info(f"  '{text}' ({score_float:.2f}) ✓")
                                 extracted_text.append(str(text))
